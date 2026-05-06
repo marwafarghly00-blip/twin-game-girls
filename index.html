@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Cartoon Twin AI</title>
+
+<style>
+body {
+  margin: 0;
+  font-family: Arial;
+  background: radial-gradient(circle,#ff9ad5,#ff4fa3,#ff85c1);
+  overflow: hidden;
+  color: white;
+}
+
+/* 🎥 camera area */
+#camera {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  object-fit: cover;
+  border-right: 4px solid white;
+}
+
+/* ✨ scan overlay on top of the camera */
+#scanOverlay {
+  position: absolute;
+  left: 0;
+  width: 50%;
+  height: 100%;
+  pointer-events: none;
+  display: none;
+}
+
+.grid {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+.scan-line {
+  position: absolute;
+  width: 100%;
+  height: 4px;
+  background: linear-gradient(to right,#ff4fa3,#fff,#ff4fa3);
+  box-shadow: 0 0 20px #ff69b4;
+  animation: moveScan 2s linear infinite;
+}
+
+@keyframes moveScan {
+  0% { top: 0%; }
+  100% { top: 100%; }
+}
+
+/* 🎀 result panel on the right side */
+#result {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 50%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+/* character display box */
+#charBox {
+  width: 500px;
+  height: 500px;
+  border-radius: 25px;
+  border: 3px solid #fff;
+  background: rgba(255,255,255,0.2);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  box-shadow: 0 0 20px #250ca2;
+}
+
+#charBox img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+#name {
+  margin-top: 15px;
+  font-size: 24px;
+}
+
+#comment {
+  margin-top: 15px;
+  font-size: 60px;
+  background: rgba(255,255,255,0.85);
+  color: black;
+  padding: 10px 20px;
+  border-radius: 20px;
+}
+
+button {
+  margin-top: 25px;
+  padding: 15px 30px;
+  font-size: 18px;
+  border: none;
+  border-radius: 25px;
+  background: linear-gradient(45deg,#ff4fa3,#ff9ad5);
+  color: white;
+  cursor: pointer;
+  box-shadow: 0 0 15px #ff69b4;
+  display: none;
+}
+</style>
+</head>
+
+<body>
+
+<video id="camera" autoplay muted></video>
+
+<div id="scanOverlay">
+  <div class="grid"></div>
+  <div class="scan-line"></div>
+</div>
+
+<div id="result">
+  <h1> Cartoon Twin AI</h1>
+  <div id="charBox">👀 Ready</div>
+  <h2 id="name">Show your face</h2>
+  <p id="comment"></p>
+  <button onclick="restart()">🔄 Start Again</button>
+</div>
+
+<!-- 🎧 audio elements -->
+<audio id="voice"></audio>
+<audio id="flipSound" src="audio/flip.mp3"></audio>
+
+<!-- MediaPipe Face Mesh -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+const video = document.getElementById("camera");
+const scanOverlay = document.getElementById("scanOverlay");
+const charBox = document.getElementById("charBox");
+const nameText = document.getElementById("name");
+const commentText = document.getElementById("comment");
+const button = document.querySelector("button");
+
+let interval;
+let faceDetected = false;
+
+// 🎭 characters list
+const chars = [
+  { name: "Nesreen ", img: "images/nesreen.jpeg", comment: "نسرين امين" },
+  { name: "Radwa ", img: "images/radwa.jpg", sound: "audio/radwa.mp3", comment: "رضوى الشربيني" },
+  { name: "angham", img: "images/angham.jpeg", comment: "أنغام" },
+  { name: "bella", img: "images/bella.jpg", comment: "بيلا حديد" },
+  { name: "elissa", img: "images/elissa.jpg", comment: "إليسا" },
+  { name: "fify", img: "images/fify.jpg", comment: "فيفي عبدة" },
+  { name: "haifa", img: "images/haifa.jpg", comment: "هيفا" },
+  { name: "kyle", img: "images/kyle.jpg", comment: "كايلي" },
+  { name: "nancy", img: "images/nancy.jpg", comment: "نانسي عجرم" },
+  { name: "selena", img: "images/selena.jpg", comment: "سيلينا" },
+  { name: "shreen", img: "images/shreen.jpg", comment: "شيرين" },
+  { name: "warda", img: "images/warda.jpg", comment: "وردة" },
+  { name: "yasmin", img: "images/yasmin.jpg", comment: "ياسمين" }
+];
+
+// 🧠 MediaPipe Face Mesh setup
+const faceMesh = new FaceMesh({
+  locateFile: (file) => {
+    return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
+  }
+});
+
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true,
+  minDetectionConfidence: 0.5,
+  minTrackingConfidence: 0.5
+});
+
+faceMesh.onResults(onFaceResults);
+
+// Handle face detection results
+function onFaceResults(results) {
+  if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+    faceDetected = true;
+  } else {
+    faceDetected = false;
+  }
+}
+
+// 🎥 connect camera to FaceMesh
+const cameraFeed = new Camera(video, {
+  onFrame: async () => {
+    await faceMesh.send({ image: video });
+  },
+  width: 640,
+  height: 480
+});
+cameraFeed.start();
+
+// ⏱ start scanning process
+function startScan() {
+  if (!faceDetected) {
+    nameText.innerText = "Please show your face 😊";
+    setTimeout(startScan, 500);
+    return;
+  }
+
+  scanOverlay.style.display = "block";
+  nameText.innerText = "Scanning... 👀";
+
+  setTimeout(() => {
+    startAnimation();
+  }, 2000);
+}
+
+// 🎰 shuffle characters animation
+function startAnimation() {
+  let count = 0;
+  const flipSound = document.getElementById("flipSound");
+
+  interval = setInterval(() => {
+    let c = chars[Math.floor(Math.random() * chars.length)];
+    charBox.innerHTML = `<img src="${c.img}">`;
+
+    // 🔊 play flip sound
+    flipSound.currentTime = 0;
+    flipSound.play();
+
+    count++;
+
+    if (count > 25) {
+      clearInterval(interval);
+      showResult();
+    }
+  }, 70);
+}
+
+// 🎯 show final result
+function showResult() {
+  scanOverlay.style.display = "none";
+
+  let c = chars[Math.floor(Math.random() * chars.length)];
+
+  charBox.innerHTML = `<img src="${c.img}">`;
+  nameText.innerText = c.name;
+  commentText.innerText = c.comment;
+
+  const voice = document.getElementById("voice");
+
+  if (c.sound) {
+    voice.src = c.sound;
+    voice.play();
+  }
+
+  button.style.display = "block";
+}
+
+// 🔄 restart the process
+function restart() {
+  button.style.display = "none";
+  commentText.innerText = "";
+  nameText.innerText = "Show your face";
+  charBox.innerHTML = "👀 Ready";
+  startScan();
+}
+
+// Start the first scan after the camera is initialized
+setTimeout(startScan, 1500);
+</script>
+
+</body>
+</html>
